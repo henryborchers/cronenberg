@@ -42,19 +42,24 @@ def main(argv: typing.Optional[typing.List[str]] = None):
     with recorder.SQLiteWriter(
             filename=output_files,
             schema_strategy=recorder.DataSchema1()) as writer:
+        existing_files = set()
+        for i, (file_name, file_path, _) in enumerate(writer.get_records()):
+            existing_files.add(os.path.join(file_path, file_name))
+        print(f"loaded {len(existing_files)} records")
         writer = typing.cast(recorder.SQLiteWriter, writer)
 
         buffer = []
-        for f in scan_path(args.root):
-            if len(writer.any_already_exists([f.relative_to(args.root)])) > 0:
-                print(f"Skipping {f.relative_to(args.root)}")
-                continue
+        try:
+            for f in scan_path(args.root):
+                if str(f.relative_to(args.root)) in existing_files:
+                    print(f"Skipping {f.relative_to(args.root)}")
+                    continue
+                data = filescanner.scan_file(args.root, f)
+                print(f.relative_to(args.root))
 
-            data = filescanner.scan_file(args.root, f)
-            print(f.relative_to(args.root))
-
-            buffer.append((f.name, data.path, data.size))
-            if len(buffer) > 100:
-                writer.add_files(buffer)
-                buffer.clear()
-        writer.add_files(buffer)
+                buffer.append((f.name, data.path, data.size))
+                if len(buffer) > 100:
+                    writer.add_files(buffer)
+                    buffer.clear()
+        finally:
+            writer.add_files(buffer)

@@ -40,6 +40,10 @@ class DataSchema(abc.ABC):
     def any_already_exists(self, cursor, file_names: typing.List[str]) -> typing.List[str]:
         """Find matching records"""
 
+    @abc.abstractmethod
+    def records(self, cursor) -> typing.Iterator[typing.List[typing.Tuple[str, str, int]]]:
+        """Return all the records"""
+
 
 class DataSchema1(DataSchema):
 
@@ -87,6 +91,12 @@ class DataSchema1(DataSchema):
             if r is not None:
                 res.add(f)
         return list(res)
+
+    def records(self, cursor) -> typing.Iterator[
+        typing.List[typing.Tuple[str, str, int]]]:
+
+        for r in cursor.execute("SELECT * FROM files ORDER BY path "):
+            yield r
 
 
 class SQLiteWriter(contextlib.AbstractContextManager):
@@ -136,3 +146,7 @@ class SQLiteWriter(contextlib.AbstractContextManager):
         cur = self._con.cursor()
         return self.strategy.any_already_exists(cur, file_names)
         # todo: any_already_exists
+
+    def get_records(self):
+        cur = self._con.cursor()
+        yield from self.strategy.records(cur)
