@@ -112,7 +112,6 @@ class DataSchema1(DataSchema):
         for r in cursor.execute("SELECT * FROM files ORDER BY path "):
             yield r
 
-
 class SQLiteWriter(contextlib.AbstractContextManager):
     def __init__(self, filename: str, schema_strategy):
         self.filename = filename

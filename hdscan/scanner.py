@@ -6,7 +6,7 @@ import pathlib
 import sys
 import typing
 import argparse
-from hdscan import filescanner, recorder
+from hdscan import filescanner, recorder, reports
 
 
 def scan_path(path: str) -> typing.Iterable[pathlib.Path]:
@@ -73,15 +73,14 @@ class DupsPath(Command):
         with recorder.SQLiteWriter(
                 filename=self.map_file,
                 schema_strategy=recorder.DataSchema1()) as reader:
+            with reports.DuplicateReportCSV(self.output_file) as report_writer:
+                for f in scan_path(self.root):
+                    print(f)
+                    matches = reader.find_matches(f)
+                    if len(matches) > 0:
+                        print(f"Found duplicate for {f}: {matches}", file=sys.stderr)
+                        report_writer.add_duplicates(f, matches)
 
-            for f in scan_path(self.root):
-                print(f)
-                matches = reader.find_matches(f)
-                if len(matches) > 0:
-                    print(f"Found duplicate for {f}: {matches}", file=sys.stderr)
-                    if self.output_file is not None:
-                        with open(self.output_file, "a") as out_file:
-                            out_file.write(f"{f}, {','.join(matches)} \n")
 
 
 class MapPath(Command):
