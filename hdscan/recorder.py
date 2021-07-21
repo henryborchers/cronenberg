@@ -44,8 +44,22 @@ class DataSchema(abc.ABC):
     def records(self, cursor) -> typing.Iterator[typing.List[typing.Tuple[str, str, int]]]:
         """Return all the records"""
 
+    @abc.abstractmethod
+    def find_matches(self, cur, file_name) -> typing.List[str]:
+        pass
+
 
 class DataSchema1(DataSchema):
+
+    def find_matches(self, cursor: sqlite3.Cursor, file_name: str) -> typing.Set[str]:
+        stats = os.stat(file_name)
+        # "SELECT * FROM files WHERE name = ? AND path = ? ",
+        file_path = pathlib.Path(file_name)
+        cursor.execute('SELECT * FROM files WHERE name = ? AND size = ?', (file_path.name, stats.st_size))
+        matches: typing.Set[str] = set()
+        for match_file_name, match_path, match_size in cursor.fetchall():
+            matches.add(os.path.join(match_path, match_file_name))
+        return matches
 
     def init_tables(self, cursor):
 
@@ -150,3 +164,7 @@ class SQLiteWriter(contextlib.AbstractContextManager):
     def get_records(self):
         cur = self._con.cursor()
         yield from self.strategy.records(cur)
+
+    def find_matches(self, file_names):
+        cur = self._con.cursor()
+        return self.strategy.find_matches(cur, file_names)
