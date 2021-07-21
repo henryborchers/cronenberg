@@ -66,10 +66,7 @@ class DupsPath(Command):
             return existing_files
 
     def execute(self):
-        if self.output_file is not None:
-            out_file_name = self.output_file
-            if os.path.exists(out_file_name):
-                os.remove(out_file_name)
+
         with recorder.SQLiteWriter(
                 filename=self.map_file,
                 schema_strategy=recorder.DataSchema1()) as reader:

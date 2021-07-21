@@ -1,5 +1,6 @@
 import abc
 import contextlib
+import os
 from types import TracebackType
 from typing import Optional, Type
 
@@ -18,6 +19,12 @@ class DuplicateReportCSV(DuplicateReportGenerator):
         if self.filename is not None:
             with open(self.filename, "a") as out_file:
                 out_file.write(f"{source}, {','.join(duplicates)} \n")
+
+    def __enter__(self):
+        if self.filename is not None:
+            if os.path.exists(self.filename):
+                os.remove(self.filename)
+        return self
 
     def __exit__(self, __exc_type: Optional[Type[BaseException]],
                  __exc_value: Optional[BaseException],
