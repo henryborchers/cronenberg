@@ -1,6 +1,7 @@
 import abc
 import contextlib
 import os
+import pathlib
 import sqlite3
 from types import TracebackType
 from typing import Optional, Type
@@ -27,12 +28,12 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
         cur.execute('DROP TABLE IF EXISTS files')
         cur.execute('''
             CREATE TABLE mapped_files
-            (name text, path text)
+            (path text, name TEXT)
             ''')
 
         cur.execute('''
             CREATE TABLE match_files
-            (name text, path text, match_id INTEGER, FOREIGN KEY(match_id) REFERENCES mapped_files(ROWID))
+            (path TEXT, name TEXT, size IDENTITY , match_id INTEGER, FOREIGN KEY(match_id) REFERENCES mapped_files(ROWID))
             ''')
         # self.strategy.init_tables(cur)
         self._con.commit()
@@ -46,10 +47,14 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
         )
         mapped_id = cur.lastrowid
         for duplicate in duplicates:
-            path, file_name = os.path.split(duplicate)
+            file_ = pathlib.Path(duplicate)
+            # path, file_name = os.path.split(duplicate)
+            if not file_.exists():
+                continue
+
             cur.execute(
                 "INSERT INTO match_files VALUES (?, ?, ?)",
-                (path, file_name, mapped_id)
+                (str(file_.parent), file_.name, file_.stat().st_size, mapped_id)
             )
         self._con.commit()
 
