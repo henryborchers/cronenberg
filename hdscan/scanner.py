@@ -119,6 +119,9 @@ class MapPath(Command):
                         print(f"Skipping {f.relative_to(self.root)}")
                         continue
                     data = filescanner.scan_file(self.root, f)
+                    if data.size == 0:
+                        continue
+
                     print(f.relative_to(self.root))
 
                     buffer.append((f.name, data.path, data.size))
