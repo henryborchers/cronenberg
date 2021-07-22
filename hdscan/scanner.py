@@ -8,6 +8,11 @@ import typing
 import argparse
 from hdscan import filescanner, recorder, reports
 
+SYSTEM_FILES = [
+    ".DS_Store",
+    "Thumbs.db"
+]
+
 
 def scan_path(path: str) -> typing.Iterable[pathlib.Path]:
     for root, dirs, files in os.walk(path, followlinks=False):
@@ -16,6 +21,8 @@ def scan_path(path: str) -> typing.Iterable[pathlib.Path]:
         dirs.sort()
         files.sort()
         for f in files:
+            if f in SYSTEM_FILES:
+                continue
             file_path = pathlib.Path(os.path.join(root, f))
             if file_path.is_symlink():
                 continue

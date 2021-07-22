@@ -15,6 +15,7 @@ class DuplicateReportGenerator(contextlib.AbstractContextManager):
     def add_duplicates(self, source, duplicates):
         pass
 
+
 class DuplicateReportSqlite(DuplicateReportGenerator):
 
     def __init__(self, filename: str, ):
@@ -27,13 +28,13 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
         cur = self._con.cursor()
         cur.execute('DROP TABLE IF EXISTS files')
         cur.execute('''
-            CREATE TABLE mapped_files
-            (path text, name TEXT)
+            CREATE TABLE match_files
+            (path text, name TEXT, size INTEGER )
             ''')
 
         cur.execute('''
-            CREATE TABLE match_files
-            (path TEXT, name TEXT, size IDENTITY , match_id INTEGER, FOREIGN KEY(match_id) REFERENCES mapped_files(ROWID))
+            CREATE TABLE mapped_files
+            (path TEXT, name TEXT , match_id INTEGER, FOREIGN KEY(match_id) REFERENCES mapped_files(ROWID))
             ''')
         # self.strategy.init_tables(cur)
         self._con.commit()
@@ -42,19 +43,16 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
         cur = self._con.cursor()
         # path, file_name
         cur.execute(
-            "INSERT INTO mapped_files VALUES (?, ?)",
-            (str(source.parent), source.name)
+            "INSERT INTO match_files VALUES (?, ?, ?)",
+            (str(source.parent), source.name, source.stat().st_size)
         )
         mapped_id = cur.lastrowid
         for duplicate in duplicates:
             file_ = pathlib.Path(duplicate)
-            # path, file_name = os.path.split(duplicate)
-            if not file_.exists():
-                continue
 
             cur.execute(
-                "INSERT INTO match_files VALUES (?, ?, ?)",
-                (str(file_.parent), file_.name, file_.stat().st_size, mapped_id)
+                "INSERT INTO mapped_files VALUES (?, ?, ?)",
+                (str(file_.parent), file_.name, mapped_id)
             )
         self._con.commit()
 
