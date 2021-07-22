@@ -70,7 +70,8 @@ class DupsPath(Command):
         with recorder.SQLiteWriter(
                 filename=self.map_file,
                 schema_strategy=recorder.DataSchema1()) as reader:
-            with reports.DuplicateReportCSV(self.output_file) as report_writer:
+            with reports.DuplicateReportSqlite(self.output_file) as report_writer:
+            # with reports.DuplicateReportCSV(self.output_file) as report_writer:
                 for f in scan_path(self.root):
                     print(f)
                     matches = reader.find_matches(f)
