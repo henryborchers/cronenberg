@@ -26,7 +26,8 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
 
     def init_tables(self):
         cur = self._con.cursor()
-        cur.execute('DROP TABLE IF EXISTS files')
+        cur.execute('DROP TABLE IF EXISTS match_files')
+        cur.execute('DROP TABLE IF EXISTS mapped_files')
         cur.execute('''
             CREATE TABLE match_files
             (path text, name TEXT, size INTEGER )
@@ -57,8 +58,8 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
         self._con.commit()
 
     def __enter__(self):
-        if os.path.exists(self.filename):
-            os.remove(self.filename)
+        # if os.path.exists(self.filename):
+        #     os.remove(self.filename)
         self._con = sqlite3.connect(self.filename)
         self.init_tables()
         return self
