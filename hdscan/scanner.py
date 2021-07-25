@@ -157,7 +157,8 @@ class MapPath(Command):
                             self._suppression_file):
                         scanner.slipped_paths.add(skipped_dir)
                 for f in scanner.scan_path(self.root):
-                    if str(f.relative_to(self.root)) in existing_files:
+                    if str(f.relative_to(self.root)) in existing_files or \
+                            not os.path.exists(f):
                         print(f"Skipping {f.relative_to(self.root)}")
                         continue
                     data = filescanner.scan_file(self.root, f)
