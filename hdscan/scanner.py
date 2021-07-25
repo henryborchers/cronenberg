@@ -74,6 +74,7 @@ class Command(abc.ABC):
     @abc.abstractmethod
     def __init__(self, args):
         pass
+
     @abc.abstractmethod
     def execute(self):
         pass
@@ -85,7 +86,7 @@ class DupsPath(Command):
         self.map_file = args.mapfile
         self.root = args.root
         self.output_file = args.output_file
-        self._suppression_file = args.supressionfile
+        self._suppression_file = args.suppression_file
 
     @staticmethod
     def get_records(map_file):
@@ -120,12 +121,11 @@ class DupsPath(Command):
                         report_writer.add_duplicates(f, matches)
 
 
-
 class MapPath(Command):
     def __init__(self, args):
         self.output_file = args.outputfile
         self.root = args.root
-        self._suppression_file = args.supressionfile
+        self._suppression_file = args.suppression_file
         # self._suppression_file = SUPPRESSION_FILE
 
     def execute(self):
