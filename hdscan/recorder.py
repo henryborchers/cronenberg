@@ -53,7 +53,6 @@ class DataSchema1(DataSchema):
 
     def find_matches(self, cursor: sqlite3.Cursor, file_name: str) -> typing.Set[str]:
         stats = os.stat(file_name)
-        # "SELECT * FROM files WHERE name = ? AND path = ? ",
         file_path = pathlib.Path(file_name)
         cursor.execute('SELECT * FROM files WHERE name = ? AND size = ?', (file_path.name, stats.st_size))
         matches: typing.Set[str] = set()
@@ -111,6 +110,7 @@ class DataSchema1(DataSchema):
 
         for r in cursor.execute("SELECT * FROM files ORDER BY path "):
             yield r
+
 
 class SQLiteWriter(contextlib.AbstractContextManager):
     def __init__(self, filename: str, schema_strategy):
