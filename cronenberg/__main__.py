@@ -1,8 +1,8 @@
-import hdscan.scanner
+import cronenberg.scanner
 
 
 def main() -> None:
-    hdscan.scanner.main()
+    cronenberg.scanner.main()
 
 
 if __name__ == '__main__':

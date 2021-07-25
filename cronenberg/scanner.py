@@ -6,7 +6,7 @@ import sys
 import typing
 import argparse
 import json
-from hdscan import filescanner, recorder, reports
+from cronenberg import filescanner, recorder, reports
 
 __all__ = ['PathScanner']
 
