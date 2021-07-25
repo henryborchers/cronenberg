@@ -1,4 +1,3 @@
-__all__ = ['scan_path']
 
 import abc
 import os
@@ -6,27 +5,48 @@ import pathlib
 import sys
 import typing
 import argparse
+import json
 from hdscan import filescanner, recorder, reports
+
+__all__ = ['PathScanner']
 
 SYSTEM_FILES = [
     ".DS_Store",
-    "Thumbs.db"
+    "._.DS_Store",
+    "Thumbs.db",
+
 ]
 
 
-def scan_path(path: str) -> typing.Iterable[pathlib.Path]:
-    for root, dirs, files in os.walk(path, followlinks=False):
-        if ".git" in dirs:
-            dirs.remove(".git")
-        dirs.sort()
-        files.sort()
-        for f in files:
-            if f in SYSTEM_FILES:
+def get_skippable_directories(suppression_file):
+    with open(suppression_file) as file_handle:
+        data = json.loads(file_handle.read())
+        return data['ignore_recursive']
+
+
+class PathScanner:
+    def __init__(self):
+        self.slipped_paths = set()
+
+    def scan_path(self, path: str) -> typing.Iterable[pathlib.Path]:
+        for root, dirs, files in os.walk(path, followlinks=False):
+            if any(root.startswith(s) for s in self.slipped_paths):
                 continue
-            file_path = pathlib.Path(os.path.join(root, f))
-            if file_path.is_symlink():
-                continue
-            yield file_path
+            if ".git" in dirs:
+                dirs.remove(".git")
+            for sub_directory in dirs:
+                if sub_directory in self.slipped_paths or \
+                        os.path.join(path, sub_directory) in self.slipped_paths:
+                    dirs.remove(sub_directory)
+            dirs.sort()
+            files.sort()
+            for f in files:
+                if f in SYSTEM_FILES:
+                    continue
+                file_path = pathlib.Path(os.path.join(root, f))
+                if file_path.is_symlink():
+                    continue
+                yield file_path
 
 
 def get_arg_parser():
@@ -35,11 +55,17 @@ def get_arg_parser():
     map_parser = subparser.add_parser("map", help="make a mapping of a file path")
     map_parser.add_argument("root", help="starting point")
     map_parser.add_argument("outputfile", help="database file to store to")
+    map_parser.add_argument('--suppression_file',
+                            default=None,
+                            help="Json file for suppressing searchs")
 
-    map_parser = subparser.add_parser("dups", help="Find duplicates")
-    map_parser.add_argument("root", help="starting point")
-    map_parser.add_argument("mapfile", help="database file to compare against")
-    map_parser.add_argument("--output_file", default=None, help="output file")
+    dup_parser = subparser.add_parser("dups", help="Find duplicates")
+    dup_parser.add_argument("root", help="starting point")
+    dup_parser.add_argument("mapfile", help="database file to compare against")
+    dup_parser.add_argument("--output_file", default=None, help="output file")
+    dup_parser.add_argument('--suppression_file',
+                            default=None,
+                            help="Json file for suppressing searchs")
 
     return parser
 
@@ -59,7 +85,7 @@ class DupsPath(Command):
         self.map_file = args.mapfile
         self.root = args.root
         self.output_file = args.output_file
-
+        self._suppression_file = args.supressionfile
 
     @staticmethod
     def get_records(map_file):
@@ -78,8 +104,15 @@ class DupsPath(Command):
                 filename=self.map_file,
                 schema_strategy=recorder.DataSchema1()) as reader:
             with reports.DuplicateReportSqlite(self.output_file) as report_writer:
-            # with reports.DuplicateReportCSV(self.output_file) as report_writer:
-                for f in scan_path(self.root):
+                scanner = PathScanner()
+                if self._suppression_file is not None and \
+                        os.path.exists(self._suppression_file):
+                    print("Using suppression file")
+                    for skipped_dir in get_skippable_directories(
+                            self._suppression_file):
+                        print(f"Adding: {skipped_dir}")
+                        scanner.slipped_paths.add(skipped_dir)
+                for f in scanner.scan_path(self.root):
                     print(f)
                     matches = reader.find_matches(f)
                     if len(matches) > 0:
@@ -92,6 +125,8 @@ class MapPath(Command):
     def __init__(self, args):
         self.output_file = args.outputfile
         self.root = args.root
+        self._suppression_file = args.supressionfile
+        # self._suppression_file = SUPPRESSION_FILE
 
     def execute(self):
         output_files = self.output_file
@@ -114,7 +149,14 @@ class MapPath(Command):
 
             buffer = []
             try:
-                for f in scan_path(self.root):
+                scanner = PathScanner()
+                if self._suppression_file is not None and \
+                        os.path.exists(self._suppression_file):
+                    print("Using suppression file")
+                    for skipped_dir in get_skippable_directories(
+                            self._suppression_file):
+                        scanner.slipped_paths.add(skipped_dir)
+                for f in scanner.scan_path(self.root):
                     if str(f.relative_to(self.root)) in existing_files:
                         print(f"Skipping {f.relative_to(self.root)}")
                         continue
