@@ -1,5 +1,6 @@
 __all__ = ["add_to_csv_file"]
 
+import hashlib
 import os
 import pathlib
 import sqlite3
@@ -20,32 +21,34 @@ def add_to_csv_file(file_name: str, data: typing.Mapping[str, typing.Any]) -> No
 class DataSchema(abc.ABC):
 
     @abc.abstractmethod
-    def init_tables(self, cursor):
+    def init_tables(self, cursor: sqlite3.Cursor):
         """Create new tables."""
 
     @abc.abstractmethod
-    def add_file(self, cursor, file_name, data):
+    def add_file(self, cursor: sqlite3.Cursor, file_name: str, data):
         """Generate new file entry"""
 
     @abc.abstractmethod
-    def add_files(self, cursor,
-                  records: typing.List[typing.Tuple[str, str, int]]):
+    def add_files(self,
+                  cursor: sqlite3.Cursor,
+                  records: typing.List[typing.Tuple[str, str, int]],
+                  source=None):
         pass
 
     @abc.abstractmethod
-    def record_exists(self, cursor, file_name, data) -> bool:
+    def record_exists(self, cursor: sqlite3.Cursor, file_name: str, data) -> bool:
         """Check if record already exists"""
 
     @abc.abstractmethod
-    def any_already_exists(self, cursor, file_names: typing.List[str]) -> typing.List[str]:
+    def any_already_exists(self, cursor: sqlite3.Cursor, file_names: typing.List[str]) -> typing.List[str]:
         """Find matching records"""
 
     @abc.abstractmethod
-    def records(self, cursor) -> typing.Iterator[typing.List[typing.Tuple[str, str, int]]]:
+    def records(self, cursor: sqlite3.Cursor) -> typing.Iterator[typing.List[typing.Tuple[str, str, int]]]:
         """Return all the records"""
 
     @abc.abstractmethod
-    def find_matches(self, cur, file_name) -> typing.List[str]:
+    def find_matches(self, cur: sqlite3.Cursor, file_name: str) -> typing.List[str]:
         pass
 
 
@@ -68,7 +71,10 @@ class DataSchema1(DataSchema):
             (name text, path text, size number)
             ''')
 
-    def add_files(self, cursor, records: typing.List[typing.Tuple[str, str, int]]):
+    def add_files(self,
+                  cursor,
+                  records: typing.List[typing.Tuple[str, str, int]],
+                  source=None):
         cursor.executemany('INSERT INTO files VALUES (?, ?, ?)',
                            records
                            )
@@ -112,6 +118,57 @@ class DataSchema1(DataSchema):
             yield r
 
 
+class DataSchema2(DataSchema1):
+    pass
+
+    def init_tables(self, cursor: sqlite3.Cursor):
+        cursor.execute('DROP TABLE IF EXISTS metadata')
+        cursor.execute('CREATE TABLE metadata (version number)')
+        cursor.execute('INSERT INTO metadata VALUES (2)')
+
+        cursor.execute('DROP TABLE IF EXISTS files')
+        cursor.execute('''
+                    CREATE TABLE files
+                    (source text, name text, path text, size number, md5 text)
+                    ''')
+
+
+    def add_files(self, cursor: sqlite3.Cursor,
+                  records: typing.List[typing.Tuple[str, str, str, int]],
+                  source=None):
+
+        cursor.executemany(
+            '''
+            INSERT INTO files (source, name, path, size) 
+            VALUES (?, ?, ?, ?)
+            ''',
+            records
+        )
+    #
+
+    def records(self, cursor: sqlite3.Cursor) -> typing.Iterator[
+        typing.List[typing.Tuple[str, str, int]]]:
+
+        yield from cursor.execute(
+            "SELECT name, path, size FROM files ORDER BY path "
+        )
+
+    def find_matches(self, cursor: sqlite3.Cursor, file_name: str) -> typing.Set[str]:
+        comparison = FileNameSizeMd5Comparison(cursor)
+        return comparison.find_matches(file_name)
+        #
+        # stats = os.stat(file_name)
+        # file_path = pathlib.Path(file_name)
+        # cursor.execute(
+        #     'SELECT name,path, size FROM files WHERE name = ? AND size = ?',
+        #     (file_path.name, stats.st_size)
+        # )
+        # matches: typing.Set[str] = set()
+        # for match_file_name, match_path, match_size in cursor.fetchall():
+        #     matches.add(os.path.join(match_path, match_file_name))
+        # return matches
+
+
 class SQLiteWriter(contextlib.AbstractContextManager):
     def __init__(self, filename: str, schema_strategy):
         self.filename = filename
@@ -138,10 +195,12 @@ class SQLiteWriter(contextlib.AbstractContextManager):
         self._con.commit()
 
     def add_files(self,
-                  records: typing.List[typing.Tuple[str, str, int]]):
+                  records: typing.List[typing.Tuple[str, str, int]],
+                  source: typing.Optional[str] = None
+                  ):
         cur = self._con.cursor()
         # todo check if any files exists in the database already
-        self.strategy.add_files(cur, records)
+        self.strategy.add_files(cur, records, source)
 
     def add_file(self, file_name, data):
         cur = self._con.cursor()
@@ -162,8 +221,84 @@ class SQLiteWriter(contextlib.AbstractContextManager):
 
     def get_records(self):
         cur = self._con.cursor()
-        yield from self.strategy.records(cur)
+        for r in self.strategy.records(cur):
+            yield r
+        # yield from self.strategy.records(cur)
 
     def find_matches(self, file_names):
         cur = self._con.cursor()
         return self.strategy.find_matches(cur, file_names)
+
+class AbsFileMatchFinderStrategy(abc.ABC):
+    @abc.abstractmethod
+    def find_matches(self, file_name: str) -> typing.Set[str]:
+        pass
+
+
+class FileNameSizeComparison(AbsFileMatchFinderStrategy):
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def find_matches(self, file_name: str) -> typing.Set[str]:
+        stats = os.stat(file_name)
+        file_path = pathlib.Path(file_name)
+        self.cursor.execute(
+            'SELECT name,path, size FROM files WHERE name = ? AND size = ?',
+            (file_path.name, stats.st_size)
+        )
+        matches: typing.Set[str] = set()
+        for match_file_name, match_path, match_size in self.cursor.fetchall():
+            matches.add(os.path.join(match_path, match_file_name))
+        return matches
+
+
+class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def find_matches(self, file_name: str) -> typing.Set[str]:
+        stats = os.stat(file_name)
+        file_path = pathlib.Path(file_name)
+
+        self.cursor.execute(
+            '''
+            SELECT source, name, path, size, md5 
+            FROM files 
+            WHERE name = ? AND size = ?
+            ''',
+            (file_path.name, stats.st_size)
+        )
+
+        matches: typing.Set[str] = set()
+        for match_source, match_file_name, match_path, match_size, match_md5 in self.cursor.fetchall():
+            if match_md5 is None:
+                if \
+                        not os.path.exists(os.path.join(match_source, match_file_name)) or \
+                        not os.path.isfile(os.path.join(match_source, match_file_name)):
+                    continue
+                match_md5 = self.get_md5(os.path.join(match_source, match_file_name))
+                self.cursor.execute(
+                    '''
+                    UPDATE files
+                    SET md5 = ?
+                    WHERE path=? AND name=?
+                    ''',
+                    (match_md5, match_path, match_file_name)
+                )
+            #     todo: add md5 to matching file record]
+            file_md5 = self.get_md5(os.path.join(file_name))
+            if match_md5 == file_md5:
+                matches.add(os.path.join(match_path, match_file_name))
+        return matches
+
+    @staticmethod
+    def get_md5(file_path: str) -> str:
+        assert os.path.exists(file_path), file_path
+        assert os.path.isfile(file_path), file_path
+        print(f"Calculating md5 for {file_path}")
+        with open(file_path, "rb") as f:
+            file_hash = hashlib.md5()
+            while chunk := f.read(8192):
+                file_hash.update(chunk)
+
+        return file_hash.hexdigest()

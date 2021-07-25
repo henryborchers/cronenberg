@@ -17,6 +17,8 @@ SYSTEM_FILES = [
 
 ]
 
+DEFAULT_DATA_SCHEME = recorder.DataSchema2()
+
 
 def get_skippable_directories(suppression_file):
     with open(suppression_file) as file_handle:
@@ -92,7 +94,7 @@ class DupsPath(Command):
     def get_records(map_file):
         with recorder.SQLiteWriter(
                 filename=map_file,
-                schema_strategy=recorder.DataSchema1()) as reader:
+                schema_strategy=DEFAULT_DATA_SCHEME) as reader:
             existing_files = set()
             for i, (file_name, file_path, _) in enumerate(reader.get_records()):
                 existing_files.add(os.path.join(file_path, file_name))
@@ -103,7 +105,7 @@ class DupsPath(Command):
 
         with recorder.SQLiteWriter(
                 filename=self.map_file,
-                schema_strategy=recorder.DataSchema1()) as reader:
+                schema_strategy=DEFAULT_DATA_SCHEME) as reader:
             with reports.DuplicateReportSqlite(self.output_file) as report_writer:
                 scanner = PathScanner()
                 if self._suppression_file is not None and \
@@ -133,14 +135,14 @@ class MapPath(Command):
         if not os.path.exists(output_files):
             with recorder.SQLiteWriter(
                     filename=output_files,
-                    schema_strategy=recorder.DataSchema1()) as writer:
+                    schema_strategy=DEFAULT_DATA_SCHEME) as writer:
                 writer = typing.cast(recorder.SQLiteWriter, writer)
                 print("initing the tables")
                 writer.init_tables()
 
         with recorder.SQLiteWriter(
                 filename=output_files,
-                schema_strategy=recorder.DataSchema1()) as writer:
+                schema_strategy=DEFAULT_DATA_SCHEME) as writer:
             existing_files = set()
             for i, (file_name, file_path, _) in enumerate(writer.get_records()):
                 existing_files.add(os.path.join(file_path, file_name))
@@ -167,12 +169,12 @@ class MapPath(Command):
 
                     print(f.relative_to(self.root))
 
-                    buffer.append((f.name, data.path, data.size))
+                    buffer.append((self.root, f.name, data.path, data.size))
                     if len(buffer) > 100:
-                        writer.add_files(buffer)
+                        writer.add_files(buffer, source=self.root)
                         buffer.clear()
             finally:
-                writer.add_files(buffer)
+                writer.add_files(buffer, source=self.root)
 
 
 def main(argv: typing.Optional[typing.List[str]] = None):
