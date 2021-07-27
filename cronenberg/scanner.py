@@ -63,7 +63,7 @@ def get_arg_parser():
 
     dup_parser = subparser.add_parser("dups", help="Find duplicates")
     dup_parser.add_argument("root", help="starting point")
-    dup_parser.add_argument("--mapfile", nargs="+", help="database file to compare against")
+    dup_parser.add_argument("--mapfile", action="extend", nargs="+", help="database file to compare against")
     dup_parser.add_argument("--output_file", default=None, help="output file")
     dup_parser.add_argument('--suppression_file',
                             default=None,
@@ -125,7 +125,7 @@ class DupsPath(Command):
                         report_writer.add_duplicates(
                             f,
                             [
-                                m[1] for m in reader.find_matches(f)
+                                os.path.join(m[0], m[1]) for m in reader.find_matches(f)
                             ]
                         )
 

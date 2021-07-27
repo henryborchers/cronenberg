@@ -7,6 +7,7 @@ import sqlite3
 import typing
 import csv
 import contextlib
+from time import sleep
 from typing import Optional, Type
 import abc
 import functools
@@ -303,19 +304,34 @@ class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
                         not os.path.exists(os.path.join(match_source, match_path, match_file_name)) or \
                         not os.path.isfile(os.path.join(match_source, match_path, match_file_name)):
                     continue
-                match_md5 = self.get_md5(os.path.join(match_source,match_path, match_file_name))
-                self.cursor.execute(
-                    '''
-                    UPDATE files
-                    SET md5 = ?
-                    WHERE path=? AND name=?
-                    ''',
-                    (match_md5, match_path, match_file_name)
-                )
-            #     todo: add md5 to matching file record]
-            file_md5 = self.get_md5(os.path.join(file_name))
-            if match_md5 == file_md5:
-                matches.add((match_source, os.path.join(match_path, match_file_name)))
+                match_md5 = self.get_md5(os.path.join(match_source, match_path, match_file_name))
+
+                update_attempts = 2
+                for attempt_number in range(update_attempts):
+                    try:
+                        self.cursor.execute(
+                            '''
+                            UPDATE files
+                            SET md5 = ?
+                            WHERE path=? AND name=?
+                            ''',
+                            (match_md5, match_path, match_file_name)
+                        )
+                        break
+                    except sqlite3.OperationalError as e:
+                        if attempt_number + 1 < update_attempts:
+                            print(e)
+                            print("sleeping for 1 second")
+                            sleep(1)
+                        else:
+                            print(f"Unable cache hash value for {file_name}")
+            try:
+                file_md5 = self.get_md5(os.path.join(file_name))
+                if match_md5 == file_md5:
+                    matches.add((match_source, os.path.join(match_path, match_file_name)))
+            except PermissionError as e:
+                print(f"unable to validate {e.filename}")
+
         return matches
 
     @staticmethod
