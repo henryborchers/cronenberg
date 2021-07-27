@@ -63,7 +63,7 @@ def get_arg_parser():
 
     dup_parser = subparser.add_parser("dups", help="Find duplicates")
     dup_parser.add_argument("root", help="starting point")
-    dup_parser.add_argument("mapfile", help="database file to compare against")
+    dup_parser.add_argument("--mapfile", nargs="+", help="database file to compare against")
     dup_parser.add_argument("--output_file", default=None, help="output file")
     dup_parser.add_argument('--suppression_file',
                             default=None,
@@ -85,7 +85,7 @@ class Command(abc.ABC):
 class DupsPath(Command):
 
     def __init__(self, args):
-        self.map_file = args.mapfile
+        self.map_files = args.mapfile
         self.root = args.root
         self.output_file = args.output_file
         self._suppression_file = args.suppression_file
@@ -102,10 +102,11 @@ class DupsPath(Command):
             return existing_files
 
     def execute(self):
-
-        with recorder.SQLiteWriter(
-                filename=self.map_file,
-                schema_strategy=DEFAULT_DATA_SCHEME) as reader:
+        # todo: make multiple map files
+        with recorder.SQLiteReader(
+            self.map_files,
+            schema_strategy=DEFAULT_DATA_SCHEME
+        ) as reader:
             with reports.DuplicateReportSqlite(self.output_file) as report_writer:
                 scanner = PathScanner()
                 if self._suppression_file is not None and \
@@ -117,10 +118,16 @@ class DupsPath(Command):
                         scanner.slipped_paths.add(skipped_dir)
                 for f in scanner.scan_path(self.root):
                     print(f)
-                    matches = reader.find_matches(f)
+                    matches = [m for m in reader.find_matches(f)]
                     if len(matches) > 0:
                         print(f"Found duplicate for {f}: {matches}", file=sys.stderr)
-                        report_writer.add_duplicates(f, matches)
+
+                        report_writer.add_duplicates(
+                            f,
+                            [
+                                m[1] for m in reader.find_matches(f)
+                            ]
+                        )
 
 
 class MapPath(Command):

@@ -153,7 +153,7 @@ class DataSchema2(DataSchema1):
             "SELECT name, path, size FROM files ORDER BY path "
         )
 
-    def find_matches(self, cursor: sqlite3.Cursor, file_name: str) -> typing.Set[str]:
+    def find_matches(self, cursor: sqlite3.Cursor, file_name: str) -> typing.Set[typing.Tuple[str, str]]:
         comparison = FileNameSizeMd5Comparison(cursor)
         return comparison.find_matches(file_name)
         #
@@ -168,6 +168,33 @@ class DataSchema2(DataSchema1):
         #     matches.add(os.path.join(match_path, match_file_name))
         # return matches
 
+
+class SQLiteReader(contextlib.AbstractContextManager):
+    def __init__(self, filenames: typing.List[str], schema_strategy):
+        self.filenames = filenames
+        self._con = None
+        self.strategy: DataSchema = schema_strategy
+
+    def __enter__(self):
+        self._con = [sqlite3.connect(filename) for filename in self.filenames]
+        return self
+
+    def __exit__(self, exc_type: Optional[Type[BaseException]],
+                 exc_value: Optional[BaseException],
+                 traceback) -> Optional[bool]:
+        if self._con is not None:
+            for s in self._con:
+                s.commit()
+                s.close()
+        return None
+
+    def find_matches(self, file_names):
+        matches = []
+        for con in self._con:
+            cur = con.cursor()
+            matches += self.strategy.find_matches(cur, file_names)
+
+        return matches
 
 class SQLiteWriter(contextlib.AbstractContextManager):
     def __init__(self, filename: str, schema_strategy):
@@ -256,7 +283,7 @@ class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
     def __init__(self, cursor):
         self.cursor = cursor
 
-    def find_matches(self, file_name: str) -> typing.Set[str]:
+    def find_matches(self, file_name: str) -> typing.Set[typing.Tuple[str, str]]:
         stats = os.stat(file_name)
         file_path = pathlib.Path(file_name)
 
@@ -273,10 +300,10 @@ class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
         for match_source, match_file_name, match_path, match_size, match_md5 in self.cursor.fetchall():
             if match_md5 is None:
                 if \
-                        not os.path.exists(os.path.join(match_source, match_file_name)) or \
-                        not os.path.isfile(os.path.join(match_source, match_file_name)):
+                        not os.path.exists(os.path.join(match_source, match_path, match_file_name)) or \
+                        not os.path.isfile(os.path.join(match_source, match_path, match_file_name)):
                     continue
-                match_md5 = self.get_md5(os.path.join(match_source, match_file_name))
+                match_md5 = self.get_md5(os.path.join(match_source,match_path, match_file_name))
                 self.cursor.execute(
                     '''
                     UPDATE files
@@ -288,7 +315,7 @@ class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
             #     todo: add md5 to matching file record]
             file_md5 = self.get_md5(os.path.join(file_name))
             if match_md5 == file_md5:
-                matches.add(os.path.join(match_path, match_file_name))
+                matches.add((match_source, os.path.join(match_path, match_file_name)))
         return matches
 
     @staticmethod
