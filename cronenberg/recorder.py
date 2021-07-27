@@ -321,7 +321,7 @@ class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
                     except sqlite3.OperationalError as e:
                         if attempt_number + 1 < update_attempts:
                             print(e)
-                            print("sleeping for 1 second")
+                            print("Sleeping for 1 second and trying again")
                             sleep(1)
                         else:
                             print(f"Unable cache hash value for {file_name}")
