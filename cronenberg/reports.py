@@ -46,7 +46,7 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
         pruned: typing.Set[str] = set()
 
         buffer: typing.Set[typing.Tuple[str, str]] = set()
-        for f in sorted(files):
+        for f in sorted(files, key=lambda x: x.lower()):
             path, file_name = os.path.split(f)
             buffer.add((path, file_name))
             if len(buffer) > buffer_size:
@@ -72,6 +72,7 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
             """,
             buffer
         )
+        pruned.update(buffer)
         return pruned
 
     def duplicates(self) -> typing.Iterable[Record]:
