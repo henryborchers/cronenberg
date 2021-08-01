@@ -4,6 +4,7 @@ import logging
 import os
 import pathlib
 import sqlite3
+import time
 import typing
 from types import TracebackType
 from typing import Optional, Type
@@ -53,25 +54,51 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
             pruned.add(f)
         return pruned
 
-
     def duplicates(self) -> typing.Iterable[Record]:
+        logger = logging.getLogger('cronenberg')
         cur = self._con.cursor()
-        for result in cur.execute(
-                '''
-                SELECT 
-                    mapped_files.name, 
-                    mf.path as local_path, 
-                    mapped_files.path as network_files, 
-                    size
-                FROM mapped_files join match_files mf on mapped_files.match_id = mf.ROWID
-                ORDER BY size desc ;
-                '''
+        logger.debug("Retrieving records of duplicates")
+        cur.execute(
+            '''
+            SELECT COUNT(*)
+            FROM mapped_files join match_files mf on mapped_files.match_id = mf.ROWID
+            '''
+        )
+        s = cur.fetchone()
+        number_of_matches = s[0]
+        start_time = time.time()
+
+        for i, result in enumerate(
+                cur.execute(
+                    '''
+                    SELECT 
+                        mapped_files.name, 
+                        mf.path as local_path, 
+                        mapped_files.path as network_files, 
+                        size
+                    FROM mapped_files join match_files mf on mapped_files.match_id = mf.ROWID
+                    ORDER BY size desc ;
+                    '''
+            )
         ):
+
             yield DuplicateReportSqlite.Record(
                 filename=result[0],
                 local_file=os.path.join(result[1], result[0]),
                 mapped_file=os.path.join(result[2], result[0]),
             )
+            if (i + 1) % int(number_of_matches/10) == 0 or \
+                    number_of_matches == i + 1 or \
+                    time.time() - start_time > 1:
+
+                completed = ((i + 1) / number_of_matches) * 100
+
+                logger.debug(
+                    f"Retrieving records of duplicates: "
+                    f"({i+1} / {number_of_matches}): {completed:.3f}%"
+                )
+
+                start_time = time.time()
         cur.close()
 
 
