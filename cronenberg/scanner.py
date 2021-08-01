@@ -7,8 +7,11 @@ import typing
 import argparse
 import json
 from cronenberg import filescanner, recorder, reports
+import logging
 
 __all__ = ['PathScanner']
+
+logging.getLogger('cronenberg').addHandler(logging.NullHandler())
 
 SYSTEM_FILES = [
     ".DS_Store",
@@ -96,18 +99,39 @@ class DupsParserBuilder(CommandParserBuilder):
         create_command = command_parser.add_parser("locate")
 
         create_command.add_argument("root", help="starting point")
-        create_command.add_argument("--mapfile", action="extend", nargs="+",
-                                help="database file to compare against")
-        create_command.add_argument("--output_file", default=None,
-                                help="output file")
-        create_command.add_argument('--suppression_file',
-                                default=None,
-                                help="Json file for suppressing searches")
+
+        create_command.add_argument(
+            "--mapfile",
+            action="extend",
+            nargs="+",
+            help="database file to compare against")
+
+        create_command.add_argument(
+            "--output_file",
+            default=None,
+            help="output file"
+        )
+
+        create_command.add_argument(
+            '--suppression_file',
+            default=None,
+            help="Json file for suppressing searches"
+        )
+
+    @classmethod
+    def _build_prune_command(cls, command_parser) -> None:
+        create_command = command_parser.add_parser("prune")
+
+        create_command.add_argument(
+            "dups_file",
+            help="file containing duplication"
+        )
 
     def build_command_subparser(self) -> argparse.ArgumentParser:
         dup_parser = self.root.add_parser("dups", help="Find duplicates")
         dup_command_parser = dup_parser.add_subparsers(dest="dups_command")
         self._build_locate_command(dup_command_parser)
+        self._build_prune_command(dup_command_parser)
 
         return dup_parser
 
@@ -130,6 +154,7 @@ class ParserCreator:
 
         return parser
 
+
 def get_arg_parser():
     builder = ParserCreator()
     return builder.get()
@@ -148,10 +173,73 @@ class Command(abc.ABC):
 class DupsPath(Command):
 
     def __init__(self, args):
-        self.map_files = args.mapfile
-        self.root = args.root
-        self.output_file = args.output_file
-        self._suppression_file = args.suppression_file
+        self.command = args.dups_command
+
+        if args.dups_command == "locate":
+            self.map_files = args.mapfile
+            self.root = args.root
+            self.output_file = args.output_file
+            self._suppression_file = args.suppression_file
+        elif args.dups_command == "prune":
+            self.dups_file = args.dups_file
+
+    def _prune(self):
+        logger = logging.getLogger('cronenberg')
+        logger.debug("Pruning dups file")
+        files_no_longer_existing = set()
+
+        with reports.DuplicateReportSqlite(
+                self.dups_file) as report:
+            logger.debug("Locating dups entries to prune")
+            for r in report.duplicates():
+                if not os.path.exists(r.local_file):
+                    logger.debug(f"Unable to locate: {r.local_file}")
+                    files_no_longer_existing.add(r.local_file)
+
+            if files_no_longer_existing:
+                pruned_files = report.remove_local_files(
+                    files_no_longer_existing
+                )
+
+                logger.info(
+                    "Pruned %d entries from dups database",
+                    len(pruned_files)
+                )
+            else:
+                logger.info(
+                    "No entries from dups database needed to be pruned"
+                )
+
+    def _locate(self):
+        with recorder.SQLiteReader(
+                self.map_files,
+                schema_strategy=DEFAULT_DATA_SCHEME
+        ) as reader:
+            with reports.DuplicateReportSqlite(
+                    self.output_file) as report_writer:
+                report_writer.init_tables()
+                scanner = PathScanner()
+                if self._suppression_file is not None and \
+                        os.path.exists(self._suppression_file):
+                    print("Using suppression file")
+                    for skipped_dir in get_skippable_directories(
+                            self._suppression_file):
+                        print(f"Adding: {skipped_dir}")
+                        scanner.slipped_paths.add(skipped_dir)
+                for f in scanner.scan_path(self.root):
+                    print(f)
+                    matches = [m for m in reader.find_matches(f)]
+                    if matches:
+                        print(f"Found duplicate for {f}: {matches}",
+                              file=sys.stderr)
+
+                        report_writer.add_duplicates(
+                            f,
+                            [
+                                os.path.join(m[0], m[1]) for m in
+                                reader.find_matches(f)
+                            ]
+                        )
 
     @staticmethod
     def get_records(map_file):
@@ -165,32 +253,15 @@ class DupsPath(Command):
             return existing_files
 
     def execute(self):
-        # todo: make multiple map files
-        with recorder.SQLiteReader(
-            self.map_files,
-            schema_strategy=DEFAULT_DATA_SCHEME
-        ) as reader:
-            with reports.DuplicateReportSqlite(self.output_file) as report_writer:
-                scanner = PathScanner()
-                if self._suppression_file is not None and \
-                        os.path.exists(self._suppression_file):
-                    print("Using suppression file")
-                    for skipped_dir in get_skippable_directories(
-                            self._suppression_file):
-                        print(f"Adding: {skipped_dir}")
-                        scanner.slipped_paths.add(skipped_dir)
-                for f in scanner.scan_path(self.root):
-                    print(f)
-                    matches = [m for m in reader.find_matches(f)]
-                    if matches:
-                        print(f"Found duplicate for {f}: {matches}", file=sys.stderr)
+        sub_commands = {
+            "locate": self._locate,
+            "prune": self._prune
+        }
+        sub_command = sub_commands.get(self.command)
+        if sub_command is None:
+            raise KeyError(f"Invalid subcommand for dups: {self.command}")
+        sub_command()
 
-                        report_writer.add_duplicates(
-                            f,
-                            [
-                                os.path.join(m[0], m[1]) for m in reader.find_matches(f)
-                            ]
-                        )
 
 
 class MapPath(Command):
@@ -253,6 +324,8 @@ def main(argv: typing.Optional[typing.List[str]] = None):
     parser = get_arg_parser()
     args = parser.parse_args(argv[1:])
 
+    set_logging()
+
     commands: typing.Dict[str, typing.Type[Command]] = {
         "map": MapPath,
         "dups": DupsPath
@@ -262,3 +335,11 @@ def main(argv: typing.Optional[typing.List[str]] = None):
         print(f"Unknown command: {args.command}", file=sys.stderr)
         sys.exit(1)
     command(args).execute()
+
+
+def set_logging():
+    logger = logging.getLogger("cronenberg")
+    logger.setLevel(logging.DEBUG)
+    log_handler = logging.StreamHandler(stream=sys.stdout)
+    log_handler.setLevel(logging.DEBUG)
+    logger.addHandler(log_handler)

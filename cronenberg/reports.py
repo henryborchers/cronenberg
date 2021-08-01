@@ -1,8 +1,10 @@
 import abc
 import contextlib
+import logging
 import os
 import pathlib
 import sqlite3
+import typing
 from types import TracebackType
 from typing import Optional, Type
 
@@ -18,11 +20,60 @@ class DuplicateReportGenerator(contextlib.AbstractContextManager):
 
 class DuplicateReportSqlite(DuplicateReportGenerator):
 
+    class Record(typing.NamedTuple):
+        filename: str
+        local_file: str
+        mapped_file: str
+
     def __init__(self, filename: str, ):
         super().__init__(filename)
         self._con = None
 
         # self.strategy
+
+    def remove_local_files(
+            self,
+            files: typing.Iterable[str]
+    ) -> typing.Set[str]:
+
+        logger = logging.getLogger('cronenberg')
+        logger.debug(f"Pruning files {files}")
+        cur = self._con.cursor()
+
+        pruned: typing.Set[str] = set()
+        for f in files:
+            logger.debug(f"Removing from database: {f}")
+            path, file_name = os.path.split(f)
+            cur.execute(
+                """
+                DELETE FROM match_files WHERE path = ? AND name = ?
+                """,
+                (path, file_name)
+            )
+            pruned.add(f)
+        return pruned
+
+
+    def duplicates(self) -> typing.Iterable[Record]:
+        cur = self._con.cursor()
+        for result in cur.execute(
+                '''
+                SELECT 
+                    mapped_files.name, 
+                    mf.path as local_path, 
+                    mapped_files.path as network_files, 
+                    size
+                FROM mapped_files join match_files mf on mapped_files.match_id = mf.ROWID
+                ORDER BY size desc ;
+                '''
+        ):
+            yield DuplicateReportSqlite.Record(
+                filename=result[0],
+                local_file=os.path.join(result[1], result[0]),
+                mapped_file=os.path.join(result[2], result[0]),
+            )
+        cur.close()
+
 
     def init_tables(self):
         cur = self._con.cursor()
@@ -61,7 +112,7 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
         # if os.path.exists(self.filename):
         #     os.remove(self.filename)
         self._con = sqlite3.connect(self.filename)
-        self.init_tables()
+
         return self
 
     def __exit__(self, __exc_type: Optional[Type[BaseException]],
