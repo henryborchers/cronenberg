@@ -54,12 +54,14 @@ class PathScanner:
 def get_arg_parser():
     parser = argparse.ArgumentParser()
     subparser = parser.add_subparsers(dest='command')
+
     map_parser = subparser.add_parser("map", help="make a mapping of a file path")
     map_parser.add_argument("root", help="starting point")
     map_parser.add_argument("outputfile", help="database file to store to")
     map_parser.add_argument('--suppression_file',
                             default=None,
                             help="Json file for suppressing searchs")
+    map_parser.add_argument("--append", default=False, action='store_true')
 
     dup_parser = subparser.add_parser("dups", help="Find duplicates")
     dup_parser.add_argument("root", help="starting point")
@@ -135,11 +137,12 @@ class MapPath(Command):
         self.output_file = args.outputfile
         self.root = args.root
         self._suppression_file = args.suppression_file
+        self._append = args.append
         # self._suppression_file = SUPPRESSION_FILE
 
     def execute(self):
         output_files = self.output_file
-        if not os.path.exists(output_files):
+        if self._append is False and not os.path.exists(output_files):
             with recorder.SQLiteWriter(
                     filename=output_files,
                     schema_strategy=DEFAULT_DATA_SCHEME) as writer:
