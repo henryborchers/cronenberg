@@ -37,21 +37,41 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
             files: typing.Iterable[str]
     ) -> typing.Set[str]:
 
+        buffer_size = 100
+
         logger = logging.getLogger('cronenberg')
         logger.debug(f"Pruning files {files}")
         cur = self._con.cursor()
 
         pruned: typing.Set[str] = set()
-        for f in files:
-            logger.debug(f"Removing from database: {f}")
+
+        buffer: typing.Set[typing.Tuple[str, str]] = set()
+        for f in sorted(files):
             path, file_name = os.path.split(f)
-            cur.execute(
-                """
-                DELETE FROM match_files WHERE path = ? AND name = ?
-                """,
-                (path, file_name)
-            )
-            pruned.add(f)
+            buffer.add((path, file_name))
+            if len(buffer) > buffer_size:
+                removal_files = [
+                    os.path.join(fn[0], fn[1]) for fn in sorted(buffer, key=lambda x: x[1])
+                ]
+                logger.debug(f"Removing from database: [{', '.join(removal_files)}]")
+                cur.executemany(
+                    """
+                    DELETE FROM match_files WHERE path = ? AND name = ?
+                    """,
+                    buffer
+                )
+                pruned.update(buffer)
+                buffer.clear()
+        removal_files = [
+                os.path.join(fn[0], fn[1]) for fn in sorted(buffer, key=lambda x: x[1])
+            ]
+        logger.debug(f"Removing from database: [{', '.join(removal_files)}]")
+        cur.executemany(
+            """
+            DELETE FROM match_files WHERE path = ? AND name = ?
+            """,
+            buffer
+        )
         return pruned
 
     def duplicates(self) -> typing.Iterable[Record]:
@@ -77,7 +97,7 @@ class DuplicateReportSqlite(DuplicateReportGenerator):
                         mapped_files.path as network_files, 
                         size
                     FROM mapped_files join match_files mf on mapped_files.match_id = mf.ROWID
-                    ORDER BY size desc ;
+                    ORDER BY local_path ASC , mapped_files.name ASC  ;
                     '''
             )
         ):
