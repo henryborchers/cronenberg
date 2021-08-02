@@ -288,17 +288,16 @@ class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
         stats = os.stat(file_name)
         file_path = pathlib.Path(file_name)
 
-        self.cursor.execute(
-            '''
-            SELECT source, name, path, size, md5 
-            FROM files 
-            WHERE name = ? AND size = ?
-            ''',
-            (file_path.name, stats.st_size)
-        )
-
-        matches: typing.Set[str] = set()
-        for match_source, match_file_name, match_path, match_size, match_md5 in self.cursor.fetchall():
+        file_md5 = None
+        matches: typing.Set[typing.Tuple[str, str]] = set()
+        for match_source, match_file_name, match_path, match_size, match_md5 in self.cursor.execute(
+                '''
+                SELECT source, name, path, size, md5 
+                FROM files 
+                WHERE name = ? AND size = ?
+                ''',
+                (file_path.name, stats.st_size)
+        ):
             if match_md5 is None:
                 if \
                         not os.path.exists(os.path.join(match_source, match_path, match_file_name)) or \
@@ -306,33 +305,40 @@ class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
                     continue
                 match_md5 = self.get_md5(os.path.join(match_source, match_path, match_file_name))
 
-                update_attempts = 2
-                for attempt_number in range(update_attempts):
-                    try:
-                        self.cursor.execute(
-                            '''
-                            UPDATE files
-                            SET md5 = ?
-                            WHERE path=? AND name=?
-                            ''',
-                            (match_md5, match_path, match_file_name)
-                        )
-                        break
-                    except sqlite3.OperationalError as e:
-                        if attempt_number + 1 < update_attempts:
-                            print(e)
-                            print("Sleeping for 1 second and trying again")
-                            sleep(1)
-                        else:
-                            print(f"Unable cache hash value for {file_name}")
+                self.update_match_hash(match_path, match_file_name, match_md5)
+
             try:
-                file_md5 = self.get_md5(os.path.join(file_name))
-                if match_md5 == file_md5:
-                    matches.add((match_source, os.path.join(match_path, match_file_name)))
+                if file_md5 is None:
+                    file_md5 = self.get_md5(file_name)
             except PermissionError as e:
                 print(f"unable to validate {e.filename}")
+                return set()
+            if match_md5 == file_md5:
+                matches.add((match_source, os.path.join(match_path, match_file_name)))
 
         return matches
+
+    def update_match_hash(self, path, file_name, md5_hash):
+        update_attempts = 2
+        for attempt_number in range(update_attempts):
+            try:
+                self.cursor.execute(
+                    '''
+                    UPDATE files
+                    SET md5 = ?
+                    WHERE path=? AND name=?
+                    ''',
+                    (md5_hash, path, file_name)
+                )
+                # self.cursor.commit()
+                break
+            except sqlite3.OperationalError as e:
+                if attempt_number + 1 < update_attempts:
+                    print(e)
+                    print("Sleeping for 1 second and trying again")
+                    sleep(1)
+                else:
+                    print(f"Unable cache hash value for {file_name}")
 
     @staticmethod
     def get_md5(file_path: str) -> str:
