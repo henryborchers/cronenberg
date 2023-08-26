@@ -1,0 +1,45 @@
+:root {
+    --main-bg-color: #3d550c;
+    --main-heading-color: #ecf87f;
+    --main-primary-color: #59981a;
+    --main-secondary-color: #81b622;
+
+}
+
+body {
+    background-color: var(--main-bg-color);
+}
+th{
+    background-color: var(--main-heading-color);
+    border-left: 1px solid;
+}
+.item {
+    background-color:  var(--main-primary-color);
+    border-top: 2px solid;
+    border-left: 1px solid;
+    border-right: 1px solid;
+    border-bottom: 1px solid;
+}
+.item td{
+    height: 20px;
+}
+.item.emptycell{
+    border-left: none
+}
+
+.instance {
+    background-color: var(--main-secondary-color);
+    border-top: 1px solid;
+    border-left: 1px solid;
+}
+.instance.emptycell{
+    border-top: none;
+    border-bottom: none
+}
+
+td{
+    padding: 5px 10px;
+}
+table {
+    border: none;
+}

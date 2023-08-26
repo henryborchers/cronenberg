@@ -1,4 +1,5 @@
 import abc
+import itertools
 import os.path
 import sqlite3
 import functools
@@ -90,6 +91,29 @@ class DupReportDataSchema(ReportDataSchema):
         for value in matches:
             data.append((file_id, value.source, value.path))
         cursor.executemany('INSERT INTO file_instances(file_source, source, path) VALUES (?,?,?)', data)
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _open_database(db_source):
+        _conn = sqlite3.connect(db_source)
+        yield _conn
+        _conn.close()
+    def get_dups_from_database_file(self, source):
+        conn: sqlite3.Connection
+        with self._open_database(source) as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT fileid, source, path, name, md5, size from file_instances JOIN main.files f on f.fileid = file_instances.file_source ORDER BY fileid")
+                files_with_dups = cursor.fetchall()
+                sorted_dups = itertools.groupby(files_with_dups, key=lambda x: x[0])
+                for group_id, file_group in sorted_dups:
+                    dups = []
+                    for _group_id, source, path, name, hash_value, size in file_group:
+                        dups.append((source, path))
+                    yield (name, hash_value, size), dups
+            finally:
+                cursor.close()
+        return []
 
 
 

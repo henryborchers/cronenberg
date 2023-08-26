@@ -8,7 +8,7 @@ import argparse
 import json
 from cronenberg import filescanner, recorder, reports, dups
 from cronenberg.path_scanner import PathScanner
-from cronenberg.database import DEFAULT_FILE_SYSTEM_MAP_DATA_SCHEME
+from cronenberg.database import DEFAULT_FILE_SYSTEM_MAP_DATA_SCHEME, DupReportDataSchema
 import logging
 
 # __all__ = ['PathScanner']
@@ -94,6 +94,21 @@ class MapParserBuilder(CommandParserBuilder):
         return map_parser
 
 
+class ReportParserBuilder(CommandParserBuilder):
+    def build_command_subparser(self) -> argparse.ArgumentParser:
+        report_parser = self.root.add_parser(
+            "report",
+            help="Create a report"
+        )
+        self._build_create_command(report_parser)
+        return report_parser
+
+    @classmethod
+    def _build_create_command(cls, report_parser):
+        report_parser.add_argument("source", help="source database file")
+        report_parser.add_argument("--output", help="folder to save html report", default=os.getcwd())
+
+
 class DupsParserBuilder(CommandParserBuilder):
 
     @classmethod
@@ -144,6 +159,10 @@ class ParserCreator:
         builder = MapParserBuilder(root_subparser)
         return builder.build_command_subparser()
 
+    def _build_report_parser(self, root_subparser) -> argparse.ArgumentParser:
+        builder = ReportParserBuilder(root_subparser)
+        return builder.build_command_subparser()
+
     def _build_dups_parser(self, root_subparser) -> argparse.ArgumentParser:
         builder = DupsParserBuilder(root_subparser)
         return builder.build_command_subparser()
@@ -153,6 +172,7 @@ class ParserCreator:
         subparser = parser.add_subparsers(dest='command')
         self._build_map_parser(subparser)
         self._build_dups_parser(subparser)
+        self._build_report_parser(subparser)
 
         return parser
 
@@ -247,8 +267,27 @@ class DupsPath(Command):
 
 
 
+class GenerateReport(Command):
+    def __init__(self, args):
+        self.source = args.source
+        self.output = args.output
+
+    def execute(self):
+        report_generator = reports.HTMLOutputReport(self.output)
+        data_reader = DupReportDataSchema()
+        report_generator.set_item_columns("File name", "Hash value", "File size")
+        report_generator.set_instance_columns('Instance Locations')
+        for (file_name, hash_value, file_size), locations in data_reader.get_dups_from_database_file(self.source):
+            report_generator.add_record(
+                item=(file_name, hash_value, file_size),
+                instances=[os.path.join(*location, file_name) for location in locations]
+            )
+        report_generator.generate()
+
+
 class MapPath(Command):
     def __init__(self, args):
+
         self.output_file = args.outputfile
         self.root = args.root
         self._suppression_file = args.suppression_file
@@ -311,7 +350,8 @@ def main(argv: typing.Optional[typing.List[str]] = None):
 
     commands: typing.Dict[str, typing.Type[Command]] = {
         "map": MapPath,
-        "dups": DupsPath
+        "dups": DupsPath,
+        "report": GenerateReport
     }
     command = commands.get(args.command)
     if command is None:
