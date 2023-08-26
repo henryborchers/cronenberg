@@ -6,52 +6,54 @@ import sys
 import typing
 import argparse
 import json
-from cronenberg import filescanner, recorder, reports
+from cronenberg import filescanner, recorder, reports, dups
+from cronenberg.path_scanner import PathScanner
+from cronenberg.database import DEFAULT_FILE_SYSTEM_MAP_DATA_SCHEME
 import logging
 
-__all__ = ['PathScanner']
+# __all__ = ['PathScanner']
+logger = logging.getLogger('cronenberg')
+logger.addHandler(logging.NullHandler())
 
-logging.getLogger('cronenberg').addHandler(logging.NullHandler())
+# SYSTEM_FILES = [
+#     ".DS_Store",
+#     "._.DS_Store",
+#     "Thumbs.db",
+#
+# ]
 
-SYSTEM_FILES = [
-    ".DS_Store",
-    "._.DS_Store",
-    "Thumbs.db",
-
-]
-
-DEFAULT_DATA_SCHEME = recorder.DataSchema2()
-
-
-def get_skippable_directories(suppression_file):
-    with open(suppression_file) as file_handle:
-        data = json.loads(file_handle.read())
-        return data['ignore_recursive']
+# DEFAULT_DATA_SCHEME = recorder.DataSchema2()
 
 
-class PathScanner:
-    def __init__(self):
-        self.slipped_paths = set()
+# def get_skippable_directories(suppression_file):
+#     with open(suppression_file) as file_handle:
+#         data = json.loads(file_handle.read())
+#         return data['ignore_recursive']
 
-    def scan_path(self, path: str) -> typing.Iterable[pathlib.Path]:
-        for root, dirs, files in os.walk(path, followlinks=False):
-            if any(root.startswith(s) for s in self.slipped_paths):
-                continue
-            if ".git" in dirs:
-                dirs.remove(".git")
-            for sub_directory in dirs:
-                if sub_directory in self.slipped_paths or \
-                        os.path.join(path, sub_directory) in self.slipped_paths:
-                    dirs.remove(sub_directory)
-            dirs.sort()
-            files.sort()
-            for f in files:
-                if f in SYSTEM_FILES:
-                    continue
-                file_path = pathlib.Path(os.path.join(root, f))
-                if file_path.is_symlink():
-                    continue
-                yield file_path
+
+# class PathScanner:
+#     def __init__(self):
+#         self.slipped_paths = set()
+#
+#     def scan_path(self, path: str) -> typing.Iterable[pathlib.Path]:
+#         for root, dirs, files in os.walk(path, followlinks=False):
+#             if any(root.startswith(s) for s in self.slipped_paths):
+#                 continue
+#             if ".git" in dirs:
+#                 dirs.remove(".git")
+#             for sub_directory in dirs:
+#                 if sub_directory in self.slipped_paths or \
+#                         os.path.join(path, sub_directory) in self.slipped_paths:
+#                     dirs.remove(sub_directory)
+#             dirs.sort()
+#             files.sort()
+#             for f in files:
+#                 if f in SYSTEM_FILES:
+#                     continue
+#                 file_path = pathlib.Path(os.path.join(root, f))
+#                 if file_path.is_symlink():
+#                     continue
+#                 yield file_path
 
 
 class CommandParserBuilder(abc.ABC):
@@ -99,7 +101,7 @@ class DupsParserBuilder(CommandParserBuilder):
         create_command = command_parser.add_parser("locate")
 
         create_command.add_argument("root", help="starting point")
-
+        create_command.add_argument("--mode", help="Choose what version of dup locator to use", type=int, default=1)
         create_command.add_argument(
             "--mapfile",
             action="extend",
@@ -170,6 +172,8 @@ class Command(abc.ABC):
         pass
 
 
+
+
 class DupsPath(Command):
 
     def __init__(self, args):
@@ -177,6 +181,7 @@ class DupsPath(Command):
 
         if args.dups_command == "locate":
             self.map_files = args.mapfile
+            self.locate_version = args.mode
             self.root = args.root
             self.output_file = args.output_file
             self._suppression_file = args.suppression_file
@@ -184,7 +189,7 @@ class DupsPath(Command):
             self.dups_file = args.dups_file
 
     def _prune(self):
-        logger = logging.getLogger('cronenberg')
+
         logger.debug("Pruning dups file")
         files_no_longer_existing = set()
 
@@ -210,53 +215,31 @@ class DupsPath(Command):
                     "No entries from dups database needed to be pruned"
                 )
 
-    def _locate(self):
-        with recorder.SQLiteReader(
-                self.map_files,
-                schema_strategy=DEFAULT_DATA_SCHEME
-        ) as reader:
-            with reports.DuplicateReportSqlite(
-                    self.output_file) as report_writer:
-                report_writer.init_tables()
-                scanner = PathScanner()
-                if self._suppression_file is not None and \
-                        os.path.exists(self._suppression_file):
-                    print("Using suppression file")
-                    for skipped_dir in get_skippable_directories(
-                            self._suppression_file):
-                        print(f"Adding: {skipped_dir}")
-                        scanner.slipped_paths.add(skipped_dir)
-                for f in scanner.scan_path(self.root):
-                    print(f)
-                    matches = [m for m in reader.find_matches(f)]
-                    if matches:
-                        print(f"Found duplicate for {f}: {matches}",
-                              file=sys.stderr)
-
-                        report_writer.add_duplicates(
-                            f,
-                            [
-                                os.path.join(m[0], m[1]) for m in
-                                reader.find_matches(f)
-                            ]
-                        )
-
     @staticmethod
     def get_records(map_file):
         with recorder.SQLiteWriter(
                 filename=map_file,
-                schema_strategy=DEFAULT_DATA_SCHEME) as reader:
+                schema_strategy=dups.DEFAULT_FILE_SYSTEM_MAP_DATA_SCHEME) as reader:
             existing_files = set()
             for i, (file_name, file_path, _) in enumerate(reader.get_records()):
                 existing_files.add(os.path.join(file_path, file_name))
             print(f"loaded {len(existing_files)} records")
             return existing_files
 
+    def _get_locate(self, version: int) -> typing.Callable[[],None]:
+        locate_version: typing.Dict[int, dups.AbsLocateCommand] = {
+            1: dups.Locate1(self.root, self.output_file, self.map_files, self._suppression_file),
+            2: dups.Locate2(self.root, self.output_file, self.map_files, self._suppression_file)
+        }
+        return locate_version[version].run
+        # return self._locate
+
     def execute(self):
         sub_commands = {
-            "locate": self._locate,
             "prune": self._prune
         }
+        if self.command == "locate":
+            sub_commands["locate"] = self._get_locate(self.locate_version)
         sub_command = sub_commands.get(self.command)
         if sub_command is None:
             raise KeyError(f"Invalid subcommand for dups: {self.command}")
@@ -277,14 +260,14 @@ class MapPath(Command):
         if self._append is False and not os.path.exists(output_files):
             with recorder.SQLiteWriter(
                     filename=output_files,
-                    schema_strategy=DEFAULT_DATA_SCHEME) as writer:
+                    schema_strategy=DEFAULT_FILE_SYSTEM_MAP_DATA_SCHEME) as writer:
                 writer = typing.cast(recorder.SQLiteWriter, writer)
                 print("initing the tables")
                 writer.init_tables()
 
         with recorder.SQLiteWriter(
                 filename=output_files,
-                schema_strategy=DEFAULT_DATA_SCHEME) as writer:
+                schema_strategy=DEFAULT_FILE_SYSTEM_MAP_DATA_SCHEME) as writer:
             existing_files = set()
             for i, (file_name, file_path, _) in enumerate(writer.get_records()):
                 existing_files.add(os.path.join(file_path, file_name))

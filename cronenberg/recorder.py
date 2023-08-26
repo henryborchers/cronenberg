@@ -193,8 +193,8 @@ class SQLiteReader(contextlib.AbstractContextManager):
         matches = []
         for con in self._con:
             cur = con.cursor()
-            matches += self.strategy.find_matches(cur, file_names)
-
+            matches += filter(lambda x: os.path.join(*x) == file_names, self.strategy.find_matches(cur, file_names))
+        # os.path.join(self.base_path, match_path, match_file_name) == str(file_name)
         return matches
 
 class SQLiteWriter(contextlib.AbstractContextManager):
@@ -283,12 +283,24 @@ class FileNameSizeComparison(AbsFileMatchFinderStrategy):
 class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
     def __init__(self, cursor):
         self.cursor = cursor
+        self.base_path = '\\\\Ds1522\\ds1522a'
 
     def find_matches(self, file_name: str) -> typing.Set[typing.Tuple[str, str]]:
         stats = os.stat(file_name)
         file_path = pathlib.Path(file_name)
 
+        self.cursor.execute(
+                '''
+                SELECT md5 
+                FROM files 
+                WHERE name = ? AND size = ? AND path = ?
+                ''',
+                (file_path.name, stats.st_size, str(file_path.relative_to(self.base_path).parent))
+        )
+        file_matches = self.cursor.fetchall()
         file_md5 = None
+        if file_matches:
+            file_md5 = file_matches[0][0]
         matches: typing.Set[typing.Tuple[str, str]] = set()
         for match_source, match_file_name, match_path, match_size, match_md5 in self.cursor.execute(
                 '''
@@ -298,6 +310,8 @@ class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
                 ''',
                 (file_path.name, stats.st_size)
         ):
+            # if os.path.join(self.base_path, match_path, match_file_name) == str(file_name):
+            #     continue
             if match_md5 is None:
                 if \
                         not os.path.exists(os.path.join(match_source, match_path, match_file_name)) or \
@@ -310,6 +324,8 @@ class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
             try:
                 if file_md5 is None:
                     file_md5 = self.get_md5(file_name)
+                    if file_md5:
+                        self.update_match_hash(str(file_path), str(file_name), file_md5)
             except PermissionError as e:
                 print(f"unable to validate {e.filename}")
                 return set()
@@ -342,12 +358,19 @@ class FileNameSizeMd5Comparison(AbsFileMatchFinderStrategy):
 
     @staticmethod
     def get_md5(file_path: str) -> str:
-        assert os.path.exists(file_path), file_path
-        assert os.path.isfile(file_path), file_path
+        if not os.path.exists(os.path.exists(file_path)):
+            raise FileNotFoundError(file_path)
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(file_path)
         print(f"Calculating md5 for {file_path}")
         with open(file_path, "rb") as f:
             file_hash = hashlib.md5()
-            while chunk := f.read(8192):
+            start = os.fstat(f.fileno()).st_size
+            # print(start)
+            while chunk := f.read(8192 * 8):
+                percent_done = f.tell() / start
                 file_hash.update(chunk)
+                # print(f"\r{(percent_done * 100):.2f} %")
+                print(f"\r{(percent_done * 100):.2f} %", flush=True if percent_done == 1.0 else False, end='\n' if percent_done == 1.0 else '')
 
         return file_hash.hexdigest()
