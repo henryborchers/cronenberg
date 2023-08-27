@@ -278,9 +278,12 @@ class GenerateReport(Command):
         report_generator.set_item_columns("File name", "Hash value", "File size")
         report_generator.set_instance_columns('Instance Locations')
         for (file_name, hash_value, file_size), locations in data_reader.get_dups_from_database_file(self.source):
+            instances = [os.path.join(*location, file_name) for location in locations]
+            if len(instances) < 2:
+                continue
             report_generator.add_record(
-                item=(file_name, hash_value, file_size),
-                instances=[os.path.join(*location, file_name) for location in locations]
+                item=(file_name, hash_value, f"{file_size} bytes"),
+                instances=instances
             )
         report_generator.generate()
 

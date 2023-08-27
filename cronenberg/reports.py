@@ -194,6 +194,105 @@ class DuplicateReportCSV(DuplicateReportGenerator):
                  __traceback: Optional[TracebackType]) -> Optional[bool]:
         return super().__exit__(__exc_type, __exc_value, __traceback)
 
+class HTMLFormatter:
+    def __init__(self, item_column_headings: typing.List[str], instance_column_headings: typing.List[str]):
+        self._item_column_names: typing.List[str] = item_column_headings
+        self._instance_columns: typing.List[str] = instance_column_headings
+
+
+    def generate_table_header(self):
+        return ''.join(
+            [
+                f"<th>{html.escape(heading)}</th>" for (i, heading) in
+                enumerate(self._item_column_names + self._instance_columns)
+            ]
+        )
+
+    def _generate_table(self, items):
+        table_rows = []
+        for row_i, (item, instances) in enumerate(items):
+            item_row = ''.join(
+                [f'<td class="item">{html.escape(str(value))}</td>' for value in item] +
+                ['<td class="item emptycell" colspan="{len(self._instance_columns)}"></td>']
+            )
+            table_rows.append(f'<tr class="item">{item_row}</tr>')
+            instance_rows = []
+            for instance in instances:
+                instance_rows.append(
+                    f'<tr class="instance"><td class="instance emptycell" colspan="{len(self._item_column_names)}"></td><td class="instance">{html.escape(instance)}</td></tr>')
+            table_rows += instance_rows
+        tables_rows_html = '\n'.join([value for value in table_rows])
+        return f"""<table cellspacing="0" cellpadding="0">
+                    <tr>
+                        {self.generate_table_header()}
+                    </tr>
+                {tables_rows_html}
+                </table>
+        """
+    def _generate_page(self, content):
+        return f"""<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <link rel="stylesheet" type="text/css" href="styles.css" /> 
+            <title>Title</title>
+        </head>
+        <body>
+            <h1>Duplication Report</h1>
+            {content}
+        </body>
+        </html>
+
+        """
+
+    def _iter_get_page_content(self, items):
+        page_size = 1000
+        page_content = []
+        for i, item in enumerate(items):
+            page_content.append(item)
+            if i % page_size == 0 and i != 0:
+                yield self._generate_table(page_content)
+                page_content.clear()
+        yield self._generate_table(page_content)
+
+    def iter_items_to_pages(self, items):
+        all_page_content = list(self._iter_get_page_content(items))
+        header = self.generate_header(len(all_page_content))
+        for content in all_page_content:
+            yield self._generate_page(
+                f"""<div>
+                <div>{header}</div>
+                <div>{content}</div>
+                </div>
+                """
+            )
+    def generate_header(self, number_of_pages):
+        header_rows = []
+        row_contents = []
+        for i in range(number_of_pages):
+            if i != 0 and i % 20 == 0:
+                header_rows.append(f"{''.join([content for content in row_contents])}")
+                row_contents.clear()
+            row_contents.append(f'<div><a href="./page{i + 1}.html">[Page {i + 1}]</a></div>'.strip())
+        header_rows.append(f"{''.join([content for content in row_contents])}")
+        row_contents.clear()
+
+        header = "".join(
+            [f'<div class="row">{row}</div>' for row in header_rows]
+        ).strip()
+        return f'"<div class="header">{header}</div>"'
+    def generate(self, items):
+        content_pages = list(self.iter_items_to_pages(items))
+        header =self.generate_header(len(content_pages))
+        front_page_data = self._generate_page(
+            f"""<div>
+            {header}
+</div>"""
+        )
+
+        for i, page in enumerate(content_pages):
+            yield f"page{i + 1}.html", page
+        yield "index.html", front_page_data
 
 class HTMLOutputReport:
 
@@ -206,61 +305,19 @@ class HTMLOutputReport:
 
     def generate(self):
 
-        table_headings = ''.join(
-            [
-                f"<th>{html.escape(heading)}</th>" for (i, heading) in enumerate(self._item_column_names + self._instance_columns)
-            ]
-        )
-        # def get_tag(item_number):
-        #     if item_number + 1 >= len(self._item_column_names):
-        #         return f'<td class="item" colspan="{len(self._instance_columns) + 1}">'
-        #     return '<td class="item">'
-
-        table_rows = []
-        for row_i, (item, instances) in enumerate(self._items):
-            item_row = ''.join(
-                [f'<td class="item">{html.escape(str(value))}</td>' for value in item] +
-                ['<td class="item emptycell" colspan="{len(self._instance_columns)}"></td>']
-            )
-            table_rows.append(f'<tr class="item">{item_row}</tr>')
-            instance_rows = []
-            for instance in instances:
-                instance_rows.append(f'<tr class="instance"><td class="instance emptycell" colspan="{len(self._item_column_names)}"></td><td class="instance">{html.escape(instance)}</td></tr>')
-            table_rows += instance_rows
-        tables_rows_html = '\n'.join([value for value in table_rows])
-        table_html = f"""
-<table cellspacing="0" cellpadding="0">
-    <tr>
-        {table_headings}
-    </tr>
-{tables_rows_html}
-</table>
-            """
-
-        report = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <link rel="stylesheet" type="text/css" href="styles.css" /> 
-    <title>Title</title>
-</head>
-<body>
-    <h1>Duplication Report</h1>
-    {table_html}
-</body>
-</html>
-        
-"""
         try:
             os.mkdir(self.output_path)
         except FileExistsError:
             pass
 
-        with open(os.path.join(self.output_path, "index.html"), "w", encoding="utf-8") as writer:
-            writer.write(report)
-
         with open(os.path.join(self.output_path, "styles.css"), "w", encoding="utf-8") as writer:
             writer.write(importlib.resources.files(cronenberg).joinpath('styles.css').read_text())
+
+        formatter = HTMLFormatter(self._item_column_names, self._instance_columns)
+        pages = formatter.generate(self._items)
+        for page_name, page in pages:
+            with open(os.path.join(self.output_path, page_name), "w", encoding="utf-8") as writer:
+                writer.write(page)
 
     def add_record(self, item, instances):
         if len(item) != len(self._item_column_names):
