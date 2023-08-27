@@ -115,6 +115,22 @@ class DupReportDataSchema(ReportDataSchema):
                 cursor.close()
         return []
 
+    def remove_file_instance(self, database_file, source, path, file_name):
+        conn: sqlite3.Connection
+        with self._open_database(database_file) as conn:
+            cursor = conn.cursor()
+            try:
+                pass
+                cursor.execute("""DELETE FROM file_instances
+    WHERE file_source IN (
+      SELECT file_source FROM file_instances fi
+      INNER JOIN files f
+        ON (F.fileid = fi.file_source)
+      WHERE path=? and name=? and source=?
+    );
+                """, (path, file_name, source))
+            finally:
+                cursor.close()
 
 
 def update_dups_database_report(writer, file_name, matching_files):

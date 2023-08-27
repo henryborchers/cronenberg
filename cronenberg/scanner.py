@@ -143,6 +143,7 @@ class DupsParserBuilder(CommandParserBuilder):
             "dups_file",
             help="file containing duplication"
         )
+        create_command.add_argument("--mode", help="Choose what version of dup locator to use", type=int, default=1)
 
     def build_command_subparser(self) -> argparse.ArgumentParser:
         dup_parser = self.root.add_parser("dups", help="Find duplicates")
@@ -199,15 +200,21 @@ class DupsPath(Command):
     def __init__(self, args):
         self.command = args.dups_command
 
+        self.locate_version = args.mode
         if args.dups_command == "locate":
             self.map_files = args.mapfile
-            self.locate_version = args.mode
             self.root = args.root
             self.output_file = args.output_file
             self._suppression_file = args.suppression_file
         elif args.dups_command == "prune":
             self.dups_file = args.dups_file
 
+    def _get_prune(self, version):
+        prune_version: typing.Dict[int, typing.Callable[[], None]] = {
+            1: lambda : self._prune(),
+            2: lambda : prune_version_2(self.dups_file)
+        }
+        return prune_version[version]
     def _prune(self):
 
         logger.debug("Pruning dups file")
@@ -260,6 +267,8 @@ class DupsPath(Command):
         }
         if self.command == "locate":
             sub_commands["locate"] = self._get_locate(self.locate_version)
+        elif self.command == "prune":
+            sub_commands["prune"] = self._get_prune(self.locate_version)
         sub_command = sub_commands.get(self.command)
         if sub_command is None:
             raise KeyError(f"Invalid subcommand for dups: {self.command}")
@@ -362,7 +371,20 @@ def main(argv: typing.Optional[typing.List[str]] = None):
         sys.exit(1)
     command(args).execute()
 
-
+def prune_version_2(database_file):
+    print("Pruning files record in database that no longer exists")
+    database = DupReportDataSchema()
+    data = list(database.get_dups_from_database_file(database_file))
+    for i, ((file_name, hash_value, size), instances) in enumerate(data):
+        for source, path in instances:
+            full_file_path = os.path.join(source, path, file_name)
+            file_exists = os.path.exists(full_file_path)
+            if not file_exists:
+                database.remove_file_instance(database_file, source, path, file_name)
+                print(f"\nRemoved: {full_file_path}")
+        percent = (i / len(data)) * 100
+        print(f"\r{percent:.2f}%", flush=False, end='' if percent != 100.0 else "\n")
+    print("Done pruning")
 def set_logging():
     logger = logging.getLogger("cronenberg")
     logger.setLevel(logging.DEBUG)
